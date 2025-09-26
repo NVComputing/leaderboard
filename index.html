@@ -112,6 +112,9 @@
             font-size: 12px;
             margin-top: 5px;
         }
+        .rows { margin-top: 10px; }
+        .row { display: grid; grid-template-columns: 140px 1fr 110px; gap: 8px; margin-bottom: 8px; align-items: center; }
+        .row input[type="text"], .row input[type="number"] { padding: 8px; border: 2px solid #ddd; border-radius: 4px; font-size: 14px; }
     </style>
 </head>
 <body>
@@ -129,12 +132,12 @@
         
         <div class="section">
             <label for="inputJson">Input JSON (schema with <code>users</code> array):</label>
-			<textarea id="inputJson" placeholder='Enter your JSON here, for example:
+            <textarea id="inputJson" placeholder='Enter your JSON here, for example:
 {
   "users": [
     {
       "id": "1000001",
-      "name": "John Doe",
+  "name": "John Doe",
       "potw": 0,
       "acslP": 0,
       "acslT": 0,
@@ -180,27 +183,31 @@
 
 		<div class="section">
 			<label for="attendanceInput">Attendance (ID then name, separated by spaces):</label>
-			<textarea id="attendanceInput" placeholder='1000001  John Doe
-1000002  Jane Doe
-1000003  Alex Smith'></textarea>
+			<textarea id="attendanceInput" placeholder='Paste here... Each line: ID  Name'></textarea>
+			<div id="attendanceRows" class="rows"></div>
 			<div class="example">Duplicates are detected and ignored (incremented once per ID).</div>
 		</div>
 
 		<div class="section">
 			<label for="potwInput">POTW (ID then name, separated by spaces):</label>
-			<textarea id="potwInput" placeholder='1000002  Jane Doe
-1000001  John Doe'></textarea>
+			<textarea id="potwInput" placeholder='Paste here... Each line: ID  Name'></textarea>
+			<div id="potwRows" class="rows"></div>
 		</div>
 
 		<div class="section">
+			<label for="hwPointsInput">Points for HW (default 12):</label>
+			<input id="hwPointsInput" type="number" value="12" min="0" step="1" style="width: 120px; padding: 8px; border: 2px solid #ddd; border-radius: 4px;" />
+            </div>
+
+		<div class="section">
 			<label for="hwInput">HW (ID then name, separated by spaces):</label>
-			<textarea id="hwInput" placeholder='1000003  Alex Smith
-1000001  John Doe'></textarea>
-		</div>
+			<textarea id="hwInput" placeholder='Paste here... Each line: ID  Name [Points optional]'></textarea>
+			<div id="hwRows" class="rows"></div>
+        </div>
         
-		<div class="button-container">
+        <div class="button-container">
 			<button onclick="processJson()">Update Leaderboard</button>
-		</div>
+        </div>
         
         <div class="section">
             <label for="outputJson">Output JSON Object:</label>
@@ -215,21 +222,22 @@
             const inputElement = document.getElementById('inputJson');
             const outputElement = document.getElementById('outputJson');
             const messageArea = document.getElementById('messageArea');
-            const attendanceInput = document.getElementById('attendanceInput');
-            const potwInput = document.getElementById('potwInput');
-            const hwInput = document.getElementById('hwInput');
+            const attendanceRows = document.getElementById('attendanceRows');
+            const potwRows = document.getElementById('potwRows');
+            const hwRows = document.getElementById('hwRows');
+            const hwPointsInput = document.getElementById('hwPointsInput');
             const acslTInput = document.getElementById('acslTInput');
             const acslPInput = document.getElementById('acslPInput');
             const usacoInput = document.getElementById('usacoInput');
 
             messageArea.innerHTML = '';
-
+            
             try {
                 const inputText = inputElement.value.trim();
                 if (!inputText) {
                     throw new Error('Please paste leaderboard JSON with a users array');
                 }
-
+                
                 const inputJson = JSON.parse(inputText);
                 if (!inputJson || !Array.isArray(inputJson.users)) {
                     throw new Error('Input must include a top-level users array');
@@ -241,15 +249,16 @@
 
 				// Do not auto-populate advanced sections here to avoid overwriting manual edits
 
-                // Process Attendance, POTW, HW
-                const attendancePairs = parseIdNamePairs(attendanceInput.value);
-                const potwPairs = parseIdNamePairs(potwInput.value);
-                const hwPairs = parseIdNamePairs(hwInput.value);
+                // Collect triples from row inputs
+                const attendanceTriples = readTriplesFromRows(attendanceRows, 1, false);
+                const potwTriples = readTriplesFromRows(potwRows, 6, true);
+                const hwDefaultPoints = toInt(hwPointsInput && hwPointsInput.value, 12);
+                const hwTriples = readTriplesFromRows(hwRows, hwDefaultPoints, false);
 
-                // Increment by deduped IDs (warn on duplicates)
-                incrementByPairs(usersById, attendancePairs, 'attendance', 'Attendance');
-                incrementByPairs(usersById, potwPairs, 'potw', 'POTW');
-                incrementByPairs(usersById, hwPairs, 'hw', 'HW');
+                // Increment by summed points per ID
+                incrementByTriples(usersById, attendanceTriples, 'attendance', 'Attendance');
+                incrementByTriples(usersById, potwTriples, 'potw', 'POTW');
+                incrementByTriples(usersById, hwTriples, 'hw', 'HW');
 
                 // Apply advanced overrides if provided (values in textareas are authoritative)
                 applyAdvancedOverrides(usersById, acslTInput.value, acslPInput.value, usacoInput.value);
@@ -291,53 +300,77 @@
             return Number.isFinite(n) ? Math.trunc(n) : fallback;
         }
 
-        function parseIdNamePairs(text) {
-            const lines = (text || '').split(/\r?\n/);
-            const pairs = [];
-            const errors = [];
-            for (const raw of lines) {
-                const line = raw.trim();
-                if (!line) continue;
-                const parsed = parseLineIdName(line);
-                if (parsed) pairs.push(parsed);
-                else errors.push(line);
+        function readTriplesFromRows(container, defaultPoints, fixedPoints) {
+            const triples = [];
+            if (!container) return triples;
+            
+            try {
+                const rows = container.querySelectorAll('.row');
+                for (const row of rows) {
+                    try {
+                        const idInput = row.querySelector('.col-id');
+                        const nameInput = row.querySelector('.col-name');
+                        const pointsInput = row.querySelector('.col-points');
+                        
+                        if (!idInput || !nameInput) continue;
+                        
+                        const id = (idInput.value || '').trim();
+                        const name = (nameInput.value || '').trim();
+                        
+                        // Skip empty rows
+                        if (!id && !name) continue;
+                        
+                        // Validate ID format (should be numeric)
+                        if (id && !/^\d+$/.test(id)) {
+                            console.warn('Invalid ID format:', id);
+                            continue;
+                        }
+                        
+                        // Skip if missing required fields
+                        if (!id || !name) {
+                            console.warn('Incomplete row - missing ID or name:', { id, name });
+                            continue;
+                        }
+                        
+                        let points = defaultPoints;
+                        if (pointsInput) {
+                            points = toInt(pointsInput.value, defaultPoints);
+                        }
+                        if (fixedPoints) points = toInt(defaultPoints, 0);
+                        
+                        triples.push({ id, name, points });
+                    } catch (e) {
+                        console.warn('Error processing row:', e);
+                        continue;
+                    }
+                }
+            } catch (e) {
+                console.error('Error reading triples from rows:', e);
+                showMessage('Error reading input data. Please check your entries.', 'error');
             }
-            if (errors.length) {
-                showMessage('Unrecognized lines (skipped): ' + errors.join(' | '), 'error');
-            }
-            return pairs;
+            
+            return triples;
         }
 
-        function parseLineIdName(line) {
-            // Require ID first, then name (name may include spaces)
-            const m = line.match(/^(\d+)\s+(.+)$/);
-            if (m) return { id: m[1], name: m[2].trim() };
-            return null;
-        }
-
-        function incrementByPairs(usersById, pairs, field, label) {
-            if (!pairs || pairs.length === 0) return;
-            const idCount = {};
-            for (const { id } of pairs) {
-                idCount[id] = (idCount[id] || 0) + 1;
-            }
-            const repeated = Object.keys(idCount).filter(id => idCount[id] > 1);
-            if (repeated.length) {
-                showMessage(label + ' repeated IDs ignored (incremented once): ' + repeated.join(', '), 'error');
-            }
-            const seen = new Set();
-            for (const { id, name } of pairs) {
-                if (seen.has(id)) continue;
-                seen.add(id);
+        function incrementByTriples(usersById, triples, field, label) {
+            if (!triples || triples.length === 0) return;
+            // Sum points per ID
+            const totals = new Map();
+            const names = new Map();
+            for (const { id, name, points } of triples) {
                 const key = String(id);
+                totals.set(key, (totals.get(key) || 0) + toInt(points, 0));
+                if (name && !names.has(key)) names.set(key, name);
+            }
+            for (const [key, total] of totals.entries()) {
                 if (usersById.has(key)) {
                     const user = usersById.get(key);
-                    user[field] = toInt(user[field], 0) + 1;
-                    if (!user.name && name) user.name = name;
+                    user[field] = toInt(user[field], 0) + toInt(total, 0);
+                    if (!user.name && names.get(key)) user.name = names.get(key);
                 } else {
                     const newUser = {
                         id: key,
-                        name: name || '',
+                        name: names.get(key) || '',
                         potw: 0,
                         acslP: 0,
                         acslT: 0,
@@ -345,9 +378,9 @@
                         attendance: 0,
                         usaco: 'Bronze'
                     };
-                    newUser[field] = 1;
+                    newUser[field] = toInt(total, 0);
                     usersById.set(key, newUser);
-                    showMessage('Added new user ' + (name || '(no name)') + ' with id ' + key + ' (' + label + ' = 1)', 'success');
+                    showMessage('Added new user ' + (newUser.name || '(no name)') + ' with id ' + key + ' (' + label + ' += ' + toInt(total, 0) + ')', 'success');
                 }
             }
         }
@@ -449,7 +482,7 @@
             setNumericField(acslPText, 'acslP', 'ACSL Programming');
             setRankField(usacoText);
         }
-
+        
         function showMessage(message, type) {
             const messageArea = document.getElementById('messageArea');
             const messageDiv = document.createElement('div');
@@ -457,7 +490,7 @@
             messageDiv.textContent = message;
             messageArea.appendChild(messageDiv);
         }
-
+        
         // Example JSON on load
         window.addEventListener('load', function() {
             const inputElement = document.getElementById('inputJson');
@@ -483,6 +516,118 @@
 					} catch (e) {}
                 }, 300);
             });
+
+			const attendanceInput = document.getElementById('attendanceInput');
+			const potwInput = document.getElementById('potwInput');
+			const hwInput = document.getElementById('hwInput');
+			const hwPointsInput = document.getElementById('hwPointsInput');
+			const attendanceRows = document.getElementById('attendanceRows');
+			const potwRows = document.getElementById('potwRows');
+			const hwRows = document.getElementById('hwRows');
+
+            // Helper functions for parsing
+            const parseLineIdName = (line) => {
+                // Require ID first, then name (name may include spaces)
+                const m = line.match(/^(\d+)\s+(.+)$/);
+                if (m) return { id: m[1], name: m[2].trim() };
+                return null;
+            };
+
+            const parseAdvancedIdName = (line) => {
+                try {
+                    // Accept either: ID first or ID last; allow names with spaces
+                    let m = line.match(/^(\d+)\s+(.+)$/);
+                    if (m) return { id: m[1], name: m[2].trim() };
+                    m = line.match(/^(.+?)\s+(\d+)$/);
+                    if (m) return { id: m[2], name: m[1].trim() };
+                    return null;
+                } catch (e) {
+                    console.warn('Error parsing line:', line, e);
+                    return null;
+                }
+            };
+
+            // Build rows on paste for Attendance, POTW, HW
+            const debounce = (fn, ms) => { let t; return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); }; };
+            const buildRows = (container, text, defaultPoints, includePoints) => {
+                try {
+                    container.innerHTML = '';
+                    const lines = (text || '').split(/\r?\n/);
+                    for (const raw of lines) {
+                        const line = raw.trim();
+                        if (!line) continue;
+                        
+                        const row = document.createElement('div');
+                        row.className = 'row';
+                        
+                        // Always create input fields
+                        const idInput = document.createElement('input');
+                        idInput.className = 'col-id';
+                        idInput.type = 'text';
+                        idInput.placeholder = 'ID';
+                        
+                        const nameInput = document.createElement('input');
+                        nameInput.className = 'col-name';
+                        nameInput.type = 'text';
+                        nameInput.placeholder = 'Name';
+                        
+                        // Try to parse the line, but don't crash if it fails
+                        try {
+                            const parsed = parseAdvancedIdName(line) || parseLineIdName(line);
+                            if (parsed) {
+                                idInput.value = parsed.id || '';
+                                nameInput.value = parsed.name || '';
+                            }
+                        } catch (e) {
+                            // If parsing fails, just leave fields empty
+                            console.warn('Failed to parse line:', line, e);
+                        }
+                        
+                        row.appendChild(idInput);
+                        row.appendChild(nameInput);
+                        
+                        if (includePoints) {
+                            const ptsInput = document.createElement('input');
+                            ptsInput.className = 'col-points';
+                            ptsInput.type = 'number';
+                            ptsInput.min = '0';
+                            ptsInput.step = '1';
+                            ptsInput.value = String(defaultPoints);
+                            ptsInput.title = 'Points for this entry';
+                            row.appendChild(ptsInput);
+                        }
+                        
+                        container.appendChild(row);
+                    }
+                } catch (e) {
+                    console.error('Error building rows:', e);
+                    showMessage('Error processing input. Please check your data format.', 'error');
+                }
+            };
+            // Add paste and input handlers with error handling
+            const safeBuildRows = (container, input, defaultPoints, includePoints) => {
+                try {
+                    buildRows(container, input.value, defaultPoints, includePoints);
+                } catch (e) {
+                    console.error('Error in safeBuildRows:', e);
+                    showMessage('Error processing input. Please try again.', 'error');
+                }
+            };
+
+            attendanceInput.addEventListener('paste', () => setTimeout(() => safeBuildRows(attendanceRows, attendanceInput, 1, true), 0));
+            potwInput.addEventListener('paste', () => setTimeout(() => safeBuildRows(potwRows, potwInput, 6, true), 0));
+            hwInput.addEventListener('paste', () => setTimeout(() => {
+                const defPts = toInt(hwPointsInput && hwPointsInput.value, 12);
+                safeBuildRows(hwRows, hwInput, defPts, true);
+            }, 0));
+
+            // Also handle typing in the textareas
+            attendanceInput.addEventListener('input', debounce(() => safeBuildRows(attendanceRows, attendanceInput, 1, true), 1000));
+            potwInput.addEventListener('input', debounce(() => safeBuildRows(potwRows, potwInput, 6, true), 1000));
+            hwInput.addEventListener('input', debounce(() => {
+                const defPts = toInt(hwPointsInput && hwPointsInput.value, 12);
+                safeBuildRows(hwRows, hwInput, defPts, true);
+            }, 1000));
         });
     </script>
 </body>
