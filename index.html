@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JSON Processor</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .section {
+            margin-bottom: 30px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: bold;
+            color: #555;
+        }
+        
+        textarea {
+            width: 100%;
+            height: 150px;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            resize: vertical;
+            box-sizing: border-box;
+        }
+        
+        textarea:focus {
+            outline: none;
+            border-color: #007bff;
+        }
+        
+        .button-container {
+            text-align: center;
+            margin: 20px 0;
+        }
+        
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 12px 30px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+        }
+        
+        button:hover {
+            background-color: #0056b3;
+        }
+        
+        button:active {
+            transform: translateY(1px);
+        }
+        
+        .error {
+            color: #dc3545;
+            background-color: #f8d7da;
+            border: 1px solid #f5c6cb;
+            padding: 12px;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+        
+        .success {
+            color: #155724;
+            background-color: #d4edda;
+            border: 1px solid #c3e6cb;
+            padding: 12px;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+        
+        .description {
+            background-color: #e7f3ff;
+            border-left: 4px solid #007bff;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .example {
+            background-color: #f8f9fa;
+            border: 1px solid #e9ecef;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>JSON Processor</h1>
+        
+        <div class="description">
+            <strong>How it works:</strong> Enter a JSON object below, click the "Process JSON" button, and get a transformed version with additional metadata and processed fields.
+        </div>
+        
+        <div class="section">
+            <label for="inputJson">Input JSON Object:</label>
+            <textarea id="inputJson" placeholder='Enter your JSON here, for example:
+{
+  "name": "John Doe",
+  "age": 30,
+  "items": ["apple", "banana"],
+  "score": 85
+}'></textarea>
+            <div class="example">
+                Example: {"name": "John", "age": 25, "items": ["item1", "item2"], "score": 100}
+            </div>
+        </div>
+        
+        <div class="button-container">
+            <button onclick="processJson()">Process JSON</button>
+        </div>
+        
+        <div class="section">
+            <label for="outputJson">Output JSON Object:</label>
+            <textarea id="outputJson" readonly placeholder="Processed JSON will appear here..."></textarea>
+        </div>
+        
+        <div id="messageArea"></div>
+    </div>
+
+    <script>
+        function processJson() {
+            const inputElement = document.getElementById('inputJson');
+            const outputElement = document.getElementById('outputJson');
+            const messageArea = document.getElementById('messageArea');
+            
+            // Clear previous messages
+            messageArea.innerHTML = '';
+            
+            try {
+                // Parse the input JSON
+                const inputText = inputElement.value.trim();
+                if (!inputText) {
+                    throw new Error('Please enter some JSON to process');
+                }
+                
+                const inputJson = JSON.parse(inputText);
+                
+                // Apply transformation function
+                const processedJson = applyTransformation(inputJson);
+                
+                // Display the result
+                outputElement.value = JSON.stringify(processedJson, null, 2);
+                
+                // Show success message
+                showMessage('JSON processed successfully!', 'success');
+                
+            } catch (error) {
+                // Show error message
+                showMessage('Error: ' + error.message, 'error');
+                outputElement.value = '';
+            }
+        }
+        
+        function applyTransformation(jsonObject) {
+            // Create a deep copy to avoid modifying the original
+            const result = JSON.parse(JSON.stringify(jsonObject));
+            
+            // Add metadata
+            result._metadata = {
+                processedAt: new Date().toISOString(),
+                originalKeys: Object.keys(jsonObject),
+                processingVersion: '1.0'
+            };
+            
+            // Transform specific types of values
+            function transformValue(obj) {
+                if (typeof obj === 'object' && obj !== null) {
+                    if (Array.isArray(obj)) {
+                        // For arrays, add length and transform each element
+                        return {
+                            items: obj.map(transformValue),
+                            length: obj.length,
+                            type: 'array'
+                        };
+                    } else {
+                        // For objects, recursively transform
+                        const transformed = {};
+                        for (const [key, value] of Object.entries(obj)) {
+                            if (key !== '_metadata') { // Don't transform metadata
+                                transformed[key] = transformValue(value);
+                            }
+                        }
+                        return transformed;
+                    }
+                } else if (typeof obj === 'string') {
+                    // Transform strings by adding length and uppercase version
+                    return {
+                        value: obj,
+                        length: obj.length,
+                        uppercase: obj.toUpperCase(),
+                        type: 'string'
+                    };
+                } else if (typeof obj === 'number') {
+                    // Transform numbers by adding mathematical properties
+                    return {
+                        value: obj,
+                        doubled: obj * 2,
+                        squared: obj * obj,
+                        isEven: obj % 2 === 0,
+                        type: 'number'
+                    };
+                } else if (typeof obj === 'boolean') {
+                    // Transform booleans by adding negation
+                    return {
+                        value: obj,
+                        negated: !obj,
+                        type: 'boolean'
+                    };
+                } else {
+                    // For null, undefined, etc.
+                    return {
+                        value: obj,
+                        type: typeof obj
+                    };
+                }
+            }
+            
+            // Apply transformations to all properties except metadata
+            const transformed = {};
+            for (const [key, value] of Object.entries(result)) {
+                if (key !== '_metadata') {
+                    transformed[key] = transformValue(value);
+                }
+            }
+            
+            // Combine transformed data with metadata
+            return {
+                ...transformed,
+                _metadata: result._metadata
+            };
+        }
+        
+        function showMessage(message, type) {
+            const messageArea = document.getElementById('messageArea');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = type;
+            messageDiv.textContent = message;
+            messageArea.appendChild(messageDiv);
+        }
+        
+        // Add some example data on load
+        window.addEventListener('load', function() {
+            const inputElement = document.getElementById('inputJson');
+            if (!inputElement.value) {
+                inputElement.value = JSON.stringify({
+                    "name": "John Doe",
+                    "age": 30,
+                    "items": ["apple", "banana", "cherry"],
+                    "score": 85,
+                    "active": true
+                }, null, 2);
+            }
+        });
+    </script>
+</body>
+</html>
