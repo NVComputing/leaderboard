@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>JSON Processor</title>
+    <title>NVComputing Leaderboard Processor</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -116,29 +116,91 @@
 </head>
 <body>
     <div class="container">
-        <h1>JSON Processor</h1>
+        <h1>NVComputing Leaderboard Processor</h1>
         
         <div class="description">
-            <strong>How it works:</strong> Enter a JSON object below, click the "Process JSON" button, and get a transformed version with additional metadata and processed fields.
+            <strong>How it works:</strong><br>
+			1) Paste your current leaderboard JSON from GitHub (with a top-level <code>users</code> array) below.<br>
+			2) Copy/paste Attendance / POTW / HW lines from the google sheets<br>
+            3) Click "Update Leaderboard" to increment counts or create missing users (defaults to 0; attendance/potw/hw set to 1 on first creation).<br>
+            4) ACSL/USACO are manually set in the collapsed section and auto-populate from the input JSON.<br>
+            5) Paste and commit the output JSON back onto GitHub.
         </div>
         
         <div class="section">
-            <label for="inputJson">Input JSON Object:</label>
-            <textarea id="inputJson" placeholder='Enter your JSON here, for example:
+            <label for="inputJson">Input JSON (schema with <code>users</code> array):</label>
+			<textarea id="inputJson" placeholder='Enter your JSON here, for example:
 {
-  "name": "John Doe",
-  "age": 30,
-  "items": ["apple", "banana"],
-  "score": 85
+  "users": [
+    {
+      "id": "1000001",
+      "name": "John Doe",
+      "potw": 0,
+      "acslP": 0,
+      "acslT": 0,
+      "hw": 0,
+      "attendance": 0,
+      "usaco": "Bronze"
+    },
+    {
+      "id": "1000002",
+      "name": "Jane Doe",
+      "potw": 0,
+      "acslP": 0,
+      "acslT": 0,
+      "hw": 0,
+      "attendance": 0,
+      "usaco": "Bronze"
+    }
+  ]
 }'></textarea>
-            <div class="example">
-                Example: {"name": "John", "age": 25, "items": ["item1", "item2"], "score": 100}
-            </div>
+			<div class="example">Minimal users JSON shown in the placeholder above.</div>
         </div>
+
+		<div class="section">
+			<details id="advancedDetails">
+				<summary><strong>Advanced: ACSL Theory / Programming / USACO Rank (auto-populated)</strong></summary>
+				<div class="section">
+					<label for="acslTInput">ACSL Theory lines: ID, name, value</label>
+					<textarea id="acslTInput" placeholder='1000001  John Doe  0
+1000002  Jane Doe  0'></textarea>
+				</div>
+				<div class="section">
+					<label for="acslPInput">ACSL Programming lines: ID, name, value</label>
+					<textarea id="acslPInput" placeholder='1000001  John Doe  0
+1000002  Jane Doe  0'></textarea>
+				</div>
+				<div class="section">
+					<label for="usacoInput">USACO Rank lines: ID, name, rank</label>
+					<textarea id="usacoInput" placeholder='1000001  John Doe  Bronze
+1000002  Jane Doe  Bronze'></textarea>
+				</div>
+			</details>
+		</div>
+
+		<div class="section">
+			<label for="attendanceInput">Attendance (ID then name, separated by spaces):</label>
+			<textarea id="attendanceInput" placeholder='1000001  John Doe
+1000002  Jane Doe
+1000003  Alex Smith'></textarea>
+			<div class="example">Duplicates are detected and ignored (incremented once per ID).</div>
+		</div>
+
+		<div class="section">
+			<label for="potwInput">POTW (ID then name, separated by spaces):</label>
+			<textarea id="potwInput" placeholder='1000002  Jane Doe
+1000001  John Doe'></textarea>
+		</div>
+
+		<div class="section">
+			<label for="hwInput">HW (ID then name, separated by spaces):</label>
+			<textarea id="hwInput" placeholder='1000003  Alex Smith
+1000001  John Doe'></textarea>
+		</div>
         
-        <div class="button-container">
-            <button onclick="processJson()">Process JSON</button>
-        </div>
+		<div class="button-container">
+			<button onclick="processJson()">Update Leaderboard</button>
+		</div>
         
         <div class="section">
             <label for="outputJson">Output JSON Object:</label>
@@ -153,114 +215,241 @@
             const inputElement = document.getElementById('inputJson');
             const outputElement = document.getElementById('outputJson');
             const messageArea = document.getElementById('messageArea');
-            
-            // Clear previous messages
+            const attendanceInput = document.getElementById('attendanceInput');
+            const potwInput = document.getElementById('potwInput');
+            const hwInput = document.getElementById('hwInput');
+            const acslTInput = document.getElementById('acslTInput');
+            const acslPInput = document.getElementById('acslPInput');
+            const usacoInput = document.getElementById('usacoInput');
+
             messageArea.innerHTML = '';
-            
+
             try {
-                // Parse the input JSON
                 const inputText = inputElement.value.trim();
                 if (!inputText) {
-                    throw new Error('Please enter some JSON to process');
+                    throw new Error('Please paste leaderboard JSON with a users array');
                 }
-                
+
                 const inputJson = JSON.parse(inputText);
-                
-                // Apply transformation function
-                const processedJson = applyTransformation(inputJson);
-                
-                // Display the result
-                outputElement.value = JSON.stringify(processedJson, null, 2);
-                
-                // Show success message
-                showMessage('JSON processed successfully!', 'success');
-                
+                if (!inputJson || !Array.isArray(inputJson.users)) {
+                    throw new Error('Input must include a top-level users array');
+                }
+
+                // Build map by id and normalize users
+                const users = inputJson.users.map(normalizeUserSchema);
+                const usersById = new Map(users.map(u => [String(u.id), u]));
+
+				// Do not auto-populate advanced sections here to avoid overwriting manual edits
+
+                // Process Attendance, POTW, HW
+                const attendancePairs = parseIdNamePairs(attendanceInput.value);
+                const potwPairs = parseIdNamePairs(potwInput.value);
+                const hwPairs = parseIdNamePairs(hwInput.value);
+
+                // Increment by deduped IDs (warn on duplicates)
+                incrementByPairs(usersById, attendancePairs, 'attendance', 'Attendance');
+                incrementByPairs(usersById, potwPairs, 'potw', 'POTW');
+                incrementByPairs(usersById, hwPairs, 'hw', 'HW');
+
+                // Apply advanced overrides if provided (values in textareas are authoritative)
+                applyAdvancedOverrides(usersById, acslTInput.value, acslPInput.value, usacoInput.value);
+
+                // Remove deprecated fields and finalize array
+                const updatedUsers = Array.from(usersById.values()).map(stripDeprecatedFields);
+
+                // Output
+                outputElement.value = JSON.stringify({ users: updatedUsers }, null, 2);
+                showMessage('Leaderboard updated successfully.', 'success');
             } catch (error) {
-                // Show error message
                 showMessage('Error: ' + error.message, 'error');
-                outputElement.value = '';
+                document.getElementById('outputJson').value = '';
             }
         }
-        
-        function applyTransformation(jsonObject) {
-            // Create a deep copy to avoid modifying the original
-            const result = JSON.parse(JSON.stringify(jsonObject));
-            
-            // Add metadata
-            result._metadata = {
-                processedAt: new Date().toISOString(),
-                originalKeys: Object.keys(jsonObject),
-                processingVersion: '1.0'
-            };
-            
-            // Transform specific types of values
-            function transformValue(obj) {
-                if (typeof obj === 'object' && obj !== null) {
-                    if (Array.isArray(obj)) {
-                        // For arrays, add length and transform each element
-                        return {
-                            items: obj.map(transformValue),
-                            length: obj.length,
-                            type: 'array'
-                        };
-                    } else {
-                        // For objects, recursively transform
-                        const transformed = {};
-                        for (const [key, value] of Object.entries(obj)) {
-                            if (key !== '_metadata') { // Don't transform metadata
-                                transformed[key] = transformValue(value);
-                            }
-                        }
-                        return transformed;
-                    }
-                } else if (typeof obj === 'string') {
-                    // Transform strings by adding length and uppercase version
-                    return {
-                        value: obj,
-                        length: obj.length,
-                        uppercase: obj.toUpperCase(),
-                        type: 'string'
-                    };
-                } else if (typeof obj === 'number') {
-                    // Transform numbers by adding mathematical properties
-                    return {
-                        value: obj,
-                        doubled: obj * 2,
-                        squared: obj * obj,
-                        isEven: obj % 2 === 0,
-                        type: 'number'
-                    };
-                } else if (typeof obj === 'boolean') {
-                    // Transform booleans by adding negation
-                    return {
-                        value: obj,
-                        negated: !obj,
-                        type: 'boolean'
-                    };
+
+        function normalizeUserSchema(user) {
+            const normalized = { ...user };
+            normalized.id = String(user.id || '').trim();
+            normalized.name = (user.name || '').trim();
+            normalized.potw = toInt(user.potw, 0);
+            normalized.acslP = toInt(user.acslP, 0);
+            normalized.acslT = toInt(user.acslT, 0);
+            normalized.hw = toInt(user.hw, 0);
+            normalized.attendance = toInt(user.attendance, 0);
+            normalized.usaco = (user.usaco || 'Bronze').trim();
+            return normalized;
+        }
+
+        function stripDeprecatedFields(user) {
+            const u = { ...user };
+            delete u.classQuestions;
+            delete u.codebytes;
+            return u;
+        }
+
+        function toInt(value, fallback) {
+            const n = Number(value);
+            return Number.isFinite(n) ? Math.trunc(n) : fallback;
+        }
+
+        function parseIdNamePairs(text) {
+            const lines = (text || '').split(/\r?\n/);
+            const pairs = [];
+            const errors = [];
+            for (const raw of lines) {
+                const line = raw.trim();
+                if (!line) continue;
+                const parsed = parseLineIdName(line);
+                if (parsed) pairs.push(parsed);
+                else errors.push(line);
+            }
+            if (errors.length) {
+                showMessage('Unrecognized lines (skipped): ' + errors.join(' | '), 'error');
+            }
+            return pairs;
+        }
+
+        function parseLineIdName(line) {
+            // Require ID first, then name (name may include spaces)
+            const m = line.match(/^(\d+)\s+(.+)$/);
+            if (m) return { id: m[1], name: m[2].trim() };
+            return null;
+        }
+
+        function incrementByPairs(usersById, pairs, field, label) {
+            if (!pairs || pairs.length === 0) return;
+            const idCount = {};
+            for (const { id } of pairs) {
+                idCount[id] = (idCount[id] || 0) + 1;
+            }
+            const repeated = Object.keys(idCount).filter(id => idCount[id] > 1);
+            if (repeated.length) {
+                showMessage(label + ' repeated IDs ignored (incremented once): ' + repeated.join(', '), 'error');
+            }
+            const seen = new Set();
+            for (const { id, name } of pairs) {
+                if (seen.has(id)) continue;
+                seen.add(id);
+                const key = String(id);
+                if (usersById.has(key)) {
+                    const user = usersById.get(key);
+                    user[field] = toInt(user[field], 0) + 1;
+                    if (!user.name && name) user.name = name;
                 } else {
-                    // For null, undefined, etc.
-                    return {
-                        value: obj,
-                        type: typeof obj
+                    const newUser = {
+                        id: key,
+                        name: name || '',
+                        potw: 0,
+                        acslP: 0,
+                        acslT: 0,
+                        hw: 0,
+                        attendance: 0,
+                        usaco: 'Bronze'
                     };
+                    newUser[field] = 1;
+                    usersById.set(key, newUser);
+                    showMessage('Added new user ' + (name || '(no name)') + ' with id ' + key + ' (' + label + ' = 1)', 'success');
                 }
             }
-            
-            // Apply transformations to all properties except metadata
-            const transformed = {};
-            for (const [key, value] of Object.entries(result)) {
-                if (key !== '_metadata') {
-                    transformed[key] = transformValue(value);
-                }
-            }
-            
-            // Combine transformed data with metadata
-            return {
-                ...transformed,
-                _metadata: result._metadata
-            };
         }
-        
+
+        function autoPopulateAdvanced(users) {
+            const acslTInput = document.getElementById('acslTInput');
+            const acslPInput = document.getElementById('acslPInput');
+            const usacoInput = document.getElementById('usacoInput');
+            const sorted = [...users].sort((a, b) => a.name.localeCompare(b.name));
+            acslTInput.value = sorted.map(u => `${u.id}  ${u.name}  ${toInt(u.acslT, 0)}`).join('\n');
+            acslPInput.value = sorted.map(u => `${u.id}  ${u.name}  ${toInt(u.acslP, 0)}`).join('\n');
+            usacoInput.value = sorted.map(u => `${u.id}  ${u.name}  ${u.usaco || 'Bronze'}`).join('\n');
+        }
+
+        function applyAdvancedOverrides(usersById, acslTText, acslPText, usacoText) {
+            const parseAdvancedIdName = (s) => {
+                let m = s.match(/^(\d+)\s+(.+)$/);
+                if (m) return { id: m[1], name: m[2].trim() };
+                m = s.match(/^(.+?)\s+(\d+)$/);
+                if (m) return { id: m[2], name: m[1].trim() };
+                return null;
+            };
+            const setNumericField = (text, field, label) => {
+                const lines = (text || '').split(/\r?\n/);
+                for (const raw of lines) {
+                    const line = raw.trim();
+                    if (!line) continue;
+                    // Expect: ID  Name With Spaces  Value (but also accept Name then ID)
+                    const parts = line.split(/\s+/);
+                    const maybeValue = parts[parts.length - 1];
+                    const value = Number(maybeValue);
+                    if (!Number.isFinite(value)) {
+                        showMessage(label + ' line skipped (bad value): ' + line, 'error');
+                        continue;
+                    }
+                    const core = parts.slice(0, parts.length - 1).join(' ');
+                    const idName = parseAdvancedIdName(core);
+                    if (!idName) {
+                        showMessage(label + ' line skipped (cannot parse id/name): ' + line, 'error');
+                        continue;
+                    }
+                    const id = String(idName.id);
+                    const name = idName.name;
+                    if (!usersById.has(id)) {
+                        usersById.set(id, {
+                            id,
+                            name: name || '',
+                            potw: 0,
+                            acslP: 0,
+                            acslT: 0,
+                            hw: 0,
+                            attendance: 0,
+                            usaco: 'Bronze'
+                        });
+                        showMessage('Added new user ' + (name || '(no name)') + ' with id ' + id + ' via ' + label, 'success');
+                    }
+                    const user = usersById.get(id);
+                    user[field] = toInt(value, 0);
+                    if (!user.name && name) user.name = name;
+                }
+            };
+
+            const setRankField = (text) => {
+                const lines = (text || '').split(/\r?\n/);
+                for (const raw of lines) {
+                    const line = raw.trim();
+                    if (!line) continue;
+                    // Expect: ID  Name With Spaces  Rank (but also accept Name then ID)
+                    const parts = line.split(/\s+/);
+                    const rank = parts[parts.length - 1];
+                    const core = parts.slice(0, parts.length - 1).join(' ');
+                    const idName = parseAdvancedIdName(core);
+                    if (!idName) {
+                        showMessage('USACO line skipped (cannot parse id/name): ' + line, 'error');
+                        continue;
+                    }
+                    const id = String(idName.id);
+                    const name = idName.name;
+                    if (!usersById.has(id)) {
+                        usersById.set(id, {
+                            id,
+                            name: name || '',
+                            potw: 0,
+                            acslP: 0,
+                            acslT: 0,
+                            hw: 0,
+                            attendance: 0,
+                            usaco: 'Bronze'
+                        });
+                        showMessage('Added new user ' + (name || '(no name)') + ' with id ' + id + ' via USACO', 'success');
+                    }
+                    const user = usersById.get(id);
+                    user.usaco = rank;
+                    if (!user.name && name) user.name = name;
+                }
+            };
+
+            setNumericField(acslTText, 'acslT', 'ACSL Theory');
+            setNumericField(acslPText, 'acslP', 'ACSL Programming');
+            setRankField(usacoText);
+        }
+
         function showMessage(message, type) {
             const messageArea = document.getElementById('messageArea');
             const messageDiv = document.createElement('div');
@@ -268,19 +457,32 @@
             messageDiv.textContent = message;
             messageArea.appendChild(messageDiv);
         }
-        
-        // Add some example data on load
+
+        // Example JSON on load
         window.addEventListener('load', function() {
             const inputElement = document.getElementById('inputJson');
-            if (!inputElement.value) {
-                inputElement.value = JSON.stringify({
-                    "name": "John Doe",
-                    "age": 30,
-                    "items": ["apple", "banana", "cherry"],
-                    "score": 85,
-                    "active": true
-                }, null, 2);
-            }
+
+			// Auto-populate advanced sections from initial JSON every time
+			try {
+				const data = JSON.parse(inputElement.value);
+				if (data && Array.isArray(data.users)) {
+					autoPopulateAdvanced(data.users.map(normalizeUserSchema));
+				}
+			} catch (e) {}
+
+            // On input/paste into JSON, auto-populate advanced after debounce
+            let populateTimer = null;
+            inputElement.addEventListener('input', function() {
+                clearTimeout(populateTimer);
+                populateTimer = setTimeout(() => {
+					try {
+						const data = JSON.parse(inputElement.value);
+						if (data && Array.isArray(data.users)) {
+							autoPopulateAdvanced(data.users.map(normalizeUserSchema));
+						}
+					} catch (e) {}
+                }, 300);
+            });
         });
     </script>
 </body>
